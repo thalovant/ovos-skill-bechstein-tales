@@ -136,3 +136,9 @@ Scraping/extraction/caching logic ported from
 
 ## Tags
 #stories #fairytales #bechstein #german #provider
+
+## Thalovant build
+
+This `thalovant` branch is Thalovant's fork. Its builds are versioned
+`X.Y.Z+thalovant.N` (see `version.py` and `MAINTENANCE_REPORT.md`) and are
+installed from Thalovant's skill index, not from PyPI.
