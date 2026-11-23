@@ -104,7 +104,7 @@ def test_handle_search_responds_for_matching_content_type(skill):
 
 def test_handle_fetch_content_success(skill):
     skill.index = _sample_index()
-    skill.get_story_paragraphs = MagicMock(return_value=["Es war einmal.", "Ende."])
+    skill._get_story_record = MagicMock(return_value={"paragraphs": ["Es war einmal.", "Ende."]})
 
     skill.handle_fetch_content(make_message({"include_source": True, "content_id": "Aschenbrödel"}))
 
@@ -124,7 +124,7 @@ def test_handle_fetch_content_unknown_id_returns_empty(skill):
 
 def test_handle_fetch_content_fetch_error_returns_empty(skill):
     skill.index = _sample_index()
-    skill.get_story_paragraphs = MagicMock(side_effect=StoryFetchError("boom"))
+    skill._get_story_record = MagicMock(side_effect=StoryFetchError("boom"))
 
     skill.handle_fetch_content(make_message({"content_id": "Aschenbrödel"}))
 

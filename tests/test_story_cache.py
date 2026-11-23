@@ -78,7 +78,7 @@ def test_the_cache_holds_each_storys_text_not_the_page(maerchen, gutenberg):
     for name in files:
         with open(os.path.join(maerchen._story_cache.directory, name), encoding="utf-8") as f:
             record = json.load(f)
-        assert set(record) == {"format", "url", "anchor", "fetched_at", "last_modified", "paragraphs"}
+        assert set(record) == {"format", "url", "anchor", "fetched_at", "last_modified", "paragraphs", "source_url"}
         assert record["format"] == skill_module.CACHE_FORMAT
         assert record["last_modified"] == LAST_MODIFIED
         assert not any("<" in p for p in record["paragraphs"])
@@ -146,18 +146,19 @@ def test_a_stale_copy_is_read_when_gutenberg_does_not_answer(maerchen, gutenberg
 
 def test_a_failed_fetch_is_not_retried_before_the_backoff(maerchen, gutenberg):
     gutenberg.pages[URL] = requests.ConnectionError("down")
+    gutenberg.pages[skill_module.archive_url(URL)] = requests.ConnectionError("down")
 
     with pytest.raises(StoryFetchError, match="down"):
         maerchen.get_story_paragraphs(ASCHENBROEDEL)
     # the same book, another story: no request
     with pytest.raises(StoryFetchError, match="not trying again"):
         maerchen.get_story_paragraphs(SCHNEIDERLEIN)
-    assert len(gutenberg.requests) == 1
+    assert len(gutenberg.requests) == 2
 
     end_backoff(maerchen)
     gutenberg.pages[URL] = book()
     assert maerchen.get_story_paragraphs(SCHNEIDERLEIN)
-    assert len(gutenberg.requests) == 2
+    assert len(gutenberg.requests) == 3
 
 
 def test_an_http_error_is_a_failed_fetch(maerchen, gutenberg):
@@ -241,3 +242,34 @@ def test_fetch_content_reply_keeps_its_shape(maerchen, gutenberg):
     assert sent.msg_type == "ovos.common_reading.fetch_content.response"
     assert list(sent.data) == ["paragraphs"]
     assert sent.data["paragraphs"][-1].endswith("Wirf schöne Kleider über mich!“")
+
+def test_publisher_outage_uses_and_cites_only_the_corresponding_archived_book(maerchen, gutenberg):
+    mirror = skill_module.archive_url(URL)
+    gutenberg.pages[URL] = response(status=503)
+    gutenberg.pages[URL].headers["Retry-After"] = "21600"
+    gutenberg.pages[mirror] = book()
+    entry = ASCHENBROEDEL
+    title = next(title for title, item in INDEX.items() if item == entry)
+    maerchen.handle_fetch_content(make_message({"content_id": title, "include_source": True}))
+    answer = maerchen.bus.emit.call_args[0][0].data
+    assert answer["paragraphs"]
+    assert answer["source"] == {"title": title, "url": mirror + "#" + entry["anchor"]}
+    assert [req["url"] for req in gutenberg.requests] == [URL, mirror]
+    assert maerchen._publisher_retry_at["www.gutenberg.org"] > time.monotonic() + 21590
+    assert maerchen.get_story_paragraphs(entry) == answer["paragraphs"]
+    assert len(gutenberg.requests) == 2
+
+
+def test_mirror_is_restricted_to_the_publishers_indexed_edition_paths():
+    assert skill_module.archive_url("https://www.gutenberg.org/files/540/540-h/540-h.htm") == (
+        "https://gutenberg.pglaf.org/5/4/540/540-h/540-h.htm")
+    assert skill_module.archive_url("https://www.gutenberg.org/cache/epub/123/pg123.html") == (
+        "https://gutenberg.pglaf.org/cache/epub/123/pg123.html")
+    assert not skill_module.archive_url("https://unrelated.example/files/540/540.htm")
+    assert not skill_module.archive_url("https://www.gutenberg.org/files/540/../help.htm")
+
+
+def test_oversized_page_cannot_be_cached(maerchen, gutenberg, monkeypatch):
+    monkeypatch.setattr(skill_module, "MAX_BOOK_BYTES", 8)
+    with pytest.raises(StoryFetchError, match="limit|large"):
+        maerchen.get_story_paragraphs(ASCHENBROEDEL)
